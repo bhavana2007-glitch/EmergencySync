@@ -1,0 +1,282 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  background: #f4f8fb;
+  color: #17212b;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5fbff 0%, #eef7f4 100%);
+}
+
+/* Header */
+
+.app-header {
+  padding: 22px 7%;
+  background: white;
+  border-bottom: 1px solid #e5edf2;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f766e;
+  color: white;
+  font-size: 25px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.2);
+}
+
+.brand h1 {
+  font-size: 23px;
+  font-weight: 750;
+  color: #12343b;
+}
+
+.brand p {
+  margin-top: 3px;
+  font-size: 13px;
+  color: #71808a;
+}
+
+/* Dashboard */
+
+.dashboard {
+  width: min(1200px, 86%);
+  margin: 0 auto;
+  padding: 65px 0;
+}
+
+/* Hero */
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.6fr 0.8fr;
+  gap: 55px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-block;
+  padding: 7px 13px;
+  border-radius: 30px;
+  background: #dff7f2;
+  color: #08766d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.hero h2 {
+  margin-top: 20px;
+  font-size: clamp(38px, 5vw, 62px);
+  line-height: 1.08;
+  letter-spacing: -2px;
+  color: #12343b;
+}
+
+.hero > div:first-child > p {
+  max-width: 690px;
+  margin-top: 22px;
+  font-size: 17px;
+  line-height: 1.7;
+  color: #60717a;
+}
+
+/* Buttons */
+
+.actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 32px;
+}
+
+.primary-btn,
+.secondary-btn {
+  padding: 14px 22px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  transition: 0.2s ease;
+}
+
+.primary-btn {
+  border: none;
+  background: #0f766e;
+  color: white;
+  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.2);
+}
+
+.primary-btn:hover {
+  background: #0b625c;
+  transform: translateY(-2px);
+}
+
+.secondary-btn {
+  border: 1px solid #cdd9de;
+  background: white;
+  color: #23434a;
+}
+
+.secondary-btn:hover {
+  background: #f6fafb;
+  transform: translateY(-2px);
+}
+
+/* Status Card */
+
+.status-card {
+  padding: 27px;
+  border: 1px solid #dce8eb;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 45px rgba(27, 69, 79, 0.08);
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e9eff1;
+  font-weight: 750;
+  color: #24444b;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #16a34a;
+  box-shadow: 0 0 0 5px #dcfce7;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 17px 0;
+  border-bottom: 1px solid #edf1f2;
+  font-size: 14px;
+}
+
+.status-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.status-row span {
+  color: #73828a;
+}
+
+.status-row strong {
+  color: #166534;
+}
+
+/* Features */
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin-top: 65px;
+}
+
+.feature-card {
+  padding: 25px;
+  background: white;
+  border: 1px solid #e1eaed;
+  border-radius: 16px;
+  transition: 0.2s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 30px rgba(27, 69, 79, 0.08);
+}
+
+.feature-icon {
+  width: 45px;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #e8f7f4;
+  font-size: 21px;
+  margin-bottom: 18px;
+}
+
+.feature-card h3 {
+  font-size: 17px;
+  color: #173a41;
+  margin-bottom: 9px;
+}
+
+.feature-card p {
+  color: #718089;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Responsive */
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .features {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .dashboard {
+    width: 90%;
+    padding: 40px 0;
+  }
+
+  .hero h2 {
+    font-size: 40px;
+    letter-spacing: -1px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .features {
+    grid-template-columns: 1fr;
+  }
+
+  .app-header {
+    padding: 18px 5%;
+  }
+}
