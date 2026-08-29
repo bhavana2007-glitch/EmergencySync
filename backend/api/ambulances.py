@@ -50,6 +50,16 @@ class AmbulanceLocationUpdate(BaseModel):
     longitude: float
     status: Optional[str] = "En Route"
     eta: Optional[int] = None
+class PatientLocationUpdate(BaseModel):
+    patient_id: str
+    latitude: float
+    longitude: float
+class AmbulanceAcceptRequest(BaseModel):
+    ambulance_id: str
+    vehicle: Optional[str] = None
+    driver: Optional[str] = None
+    latitude: float
+    longitude: float
 
 
 # ============================================================
@@ -141,6 +151,50 @@ async def book_ambulance(
             "name": booking.hospital_name,
         },
     }
+# =========================
+# PATIENT LIVE LOCATION
+# =========================
+
+@router.post("/patient-location")
+async def update_patient_location(
+    location: PatientLocationUpdate,
+):
+    if active_booking["booking_id"] is None:
+        return {
+            "success": False,
+            "message": "No active ambulance request.",
+        }
+
+    if str(active_booking["patient_id"]) != str(
+        location.patient_id
+    ):
+        return {
+            "success": False,
+            "message": "Patient does not match active booking.",
+        }
+
+    active_booking["patient_latitude"] = (
+        location.latitude
+    )
+
+    active_booking["patient_longitude"] = (
+        location.longitude
+    )
+
+    return {
+        "success": True,
+        "booking_id": active_booking["booking_id"],
+        "patient": {
+            "id": active_booking["patient_id"],
+            "latitude": active_booking[
+                "patient_latitude"
+            ],
+            "longitude": active_booking[
+                "patient_longitude"
+            ],
+        },
+    }
+
 
 
 # ============================================================
@@ -250,6 +304,56 @@ async def get_active_ambulance():
             "id": active_booking["hospital_id"],
             "name": active_booking["hospital_name"],
         },
+    }
+# ============================================================
+# ACCEPT AMBULANCE REQUEST
+# ============================================================
+
+@router.post("/accept")
+async def accept_ambulance_request(
+    request: AmbulanceAcceptRequest,
+):
+    if active_booking["booking_id"] is None:
+        return {
+            "success": False,
+            "message": "No active ambulance request.",
+        }
+
+    if active_booking["status"] != "ambulance_requested":
+        return {
+            "success": False,
+            "message": "This ambulance request has already been assigned or completed.",
+        }
+
+    active_booking["ambulance"] = {
+        "ambulance_id": request.ambulance_id,
+        "vehicle": request.vehicle or request.ambulance_id,
+        "driver": request.driver or "Driver Assigned",
+        "latitude": request.latitude,
+        "longitude": request.longitude,
+        "status": "Assigned",
+    }
+
+    active_booking["status"] = "ambulance_assigned"
+    active_booking["eta"] = None
+
+    return {
+        "success": True,
+        "booking_id": active_booking["booking_id"],
+        "status": "ambulance_assigned",
+        "message": "Ambulance successfully assigned to emergency.",
+        "ambulance": active_booking["ambulance"],
+        "patient": {
+            "id": active_booking["patient_id"],
+            "name": active_booking["patient_name"],
+            "latitude": active_booking["patient_latitude"],
+            "longitude": active_booking["patient_longitude"],
+        },
+        "hospital": {
+            "id": active_booking["hospital_id"],
+            "name": active_booking["hospital_name"],
+        },
+        "eta": active_booking["eta"],
     }
 
 

@@ -367,6 +367,15 @@ export default function PatientDashboard({
   ] = useState<Ambulance | null>(null);
 
   // ==========================================================
+  // LIVE PATIENT LOCATION SHARING
+  // ==========================================================
+
+  const [
+    ambulanceRequested,
+    setAmbulanceRequested,
+  ] = useState(false);
+
+  // ==========================================================
   // UI STATE
   // ==========================================================
 
@@ -708,6 +717,61 @@ export default function PatientDashboard({
       );
     };
   }, []);
+
+  // ==========================================================
+  // SEND PATIENT LIVE LOCATION TO AMBULANCE BACKEND
+  // ==========================================================
+
+  useEffect(() => {
+    if (!ambulanceRequested) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const sendPatientLocation = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        await fetch(
+          `${API_BASE}/api/ambulances/patient-location`,
+          {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({
+              patient_id: String(user.id),
+              latitude: patientLocation[0],
+              longitude: patientLocation[1],
+            }),
+          }
+        );
+      } catch (err) {
+        console.error(
+          "Patient live location update failed:",
+          err
+        );
+      }
+    };
+
+    sendPatientLocation();
+
+    const intervalId =
+      window.setInterval(
+        sendPatientLocation,
+        3000
+      );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    ambulanceRequested,
+    patientLocation,
+    user.id,
+  ]);
 
   // ==========================================================
   // INITIALISE LEAFLET MAP
@@ -1278,6 +1342,7 @@ export default function PatientDashboard({
         setSuccess(
           `Emergency request sent successfully. ${selectedHospital.name} has been selected. Waiting for an ambulance to accept the request.`
         );
+        setAmbulanceRequested(true);
       } catch (err: any) {
         setError(
           err?.message ??
