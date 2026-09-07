@@ -6,12 +6,14 @@ from api.files import router as files_router
 from api.hospitals import router as hospitals_router
 from api.auth import router as auth_router
 from api import ambulances
+from api.alerts import router as alerts_router
 
 from database import engine, Base
 
 from models.case import EmergencyCase
 from models.hospital import Hospital
 from models.user import User
+from models.alert import SpecialistAlert
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -33,6 +35,7 @@ app.include_router(files_router)
 app.include_router(hospitals_router)
 app.include_router(auth_router)
 app.include_router(ambulances.router)
+app.include_router(alerts_router)
 
 @app.get("/")
 def root():

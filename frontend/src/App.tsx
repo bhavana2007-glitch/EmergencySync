@@ -59,6 +59,11 @@ type AIResult = {
   recommendation?: string;
   recommended_action?: string;
   recommendations?: string[];
+  observations?: string[];
+  possible_conditions?: string[];
+  limitations?: string[];
+  recommended_department?: string;
+  requires_immediate_attention?: boolean;
   confidence?: number | string;
   [key: string]: unknown;
 };
@@ -115,6 +120,8 @@ type DashboardProps = {
   analyzing: boolean;
   createCase: () => void;
   analyzeCase: () => void;
+  analyzeUploadedFile: (documentType: "medical_report" | "physical_ecg") => void;
+  loadAmbulanceCase: () => void;
   resetCase: () => void;
 };
 
@@ -725,6 +732,48 @@ function App() {
     }
   };
 
+  const loadAmbulanceCase = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/ambulances/active`, {
+        headers: authHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.active || !data.patient) {
+        throw new Error("No active ambulance case is available yet.");
+      }
+      const patient = data.patient;
+      setForm({
+        patient_name: patient.name || "",
+        age: patient.age != null ? String(patient.age) : "",
+        gender: patient.gender || "",
+        symptoms: patient.symptoms || "",
+        medical_history: patient.medical_history || "",
+        medications: patient.medications || "",
+        allergies: patient.allergies || "",
+        heart_rate: "", systolic_bp: "", diastolic_bp: "", spo2: "",
+        respiratory_rate: "", temperature: "",
+      });
+      setCaseData(data.case_id ? { case_id: data.case_id, status: data.status } : null);
+      setAiResult(null);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not load the ambulance case.");
+    }
+  };
+
+  const analyzeUploadedFile = async (documentType: "medical_report" | "physical_ecg") => {
+    if (!caseData?.case_id) return;
+    setAnalyzing(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseData.case_id)}/analyze-file?document_type=${documentType}`, { method: "POST", headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "File analysis failed.");
+      setAiResult(data.ai_analysis);
+      setCaseData((previous) => previous ? { ...previous, status: "analyzed", ai_analysis: data.ai_analysis } : previous);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "File analysis failed.");
+    } finally { setAnalyzing(false); }
+  };
+
   /* ==========================================================
      RESET
      ========================================================== */
@@ -828,6 +877,8 @@ function App() {
     analyzing,
     createCase,
     analyzeCase,
+    analyzeUploadedFile,
+    loadAmbulanceCase,
     resetCase,
   };
 
@@ -2618,6 +2669,7 @@ function SpecialistDashboard({
         }. Review emergency cases and provide specialist input.`}
         icon="🧠"
       />
+      <SpecialistAlertPanel user={user} />
 
       {caseData ? (
         <>
@@ -2788,6 +2840,8 @@ function ClinicalDataPanel({
   updateField,
   createCase,
   analyzeCase,
+  analyzeUploadedFile,
+  loadAmbulanceCase,
   resetCase,
   loading,
   analyzing,
@@ -3028,6 +3082,14 @@ function ClinicalDataPanel({
         </section>
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          {roleLabel === "Nurse" && (
+            <button
+              onClick={() => void loadAmbulanceCase()}
+              className="rounded-2xl border border-red-200 bg-red-50 px-6 py-4 font-bold text-red-700"
+            >
+              🚑 Load Ambulance Case
+            </button>
+          )}
           <button
             onClick={() =>
               void createCase()
@@ -3135,6 +3197,12 @@ function ClinicalDataPanel({
             </>
           )}
         </div>
+
+        <ECGAttachmentPanel
+          caseId={caseData?.case_id}
+          analyzing={analyzing}
+          onAnalyze={analyzeUploadedFile}
+        />
       </aside>
     </div>
   );
@@ -3350,7 +3418,8 @@ function AIResultCard({
 
   const category =
     aiResult.emergency_category ||
-    aiResult.category;
+      aiResult.category;
+  const specialist = specialistForCategory(String(category || ""));
 
   const recommendation =
     aiResult.recommendation ||
@@ -3424,6 +3493,33 @@ function AIResultCard({
               )}
             </p>
           </div>
+        )}
+
+        {specialist && (
+          <div className="rounded-2xl border border-red-300 bg-red-50 p-5 text-red-900">
+            <p className="text-xs font-bold uppercase tracking-wider">Specialist escalation</p>
+            <p className="mt-1 font-bold">🚨 Notify {specialist}</p>
+            <p className="mt-1 text-xs">AI routing suggestion — the responsible clinician must review the case.</p>
+          </div>
+        )}
+
+        {aiResult.requires_immediate_attention && (
+          <div className="rounded-2xl border border-red-300 bg-red-50 p-5 text-red-900">
+            <p className="font-bold">🚨 Immediate clinical review required</p>
+            <p className="mt-1 text-sm">Notify the responsible doctor now and follow local emergency protocol.</p>
+          </div>
+        )}
+
+        {Array.isArray(aiResult.possible_conditions) && aiResult.possible_conditions.length > 0 && (
+          <ResultList title="Possible conditions for clinician review" items={aiResult.possible_conditions} />
+        )}
+
+        {Array.isArray(aiResult.observations) && aiResult.observations.length > 0 && (
+          <ResultList title="Findings from the supplied information" items={aiResult.observations} />
+        )}
+
+        {aiResult.recommended_department && (
+          <InfoRow label="Recommended department" value={String(aiResult.recommended_department)} />
         )}
 
         {aiResult.summary && (
@@ -3501,6 +3597,10 @@ function AIResultCard({
           </div>
         )}
 
+        {Array.isArray(aiResult.limitations) && aiResult.limitations.length > 0 && (
+          <ResultList title="Information limits" items={aiResult.limitations} tone="amber" />
+        )}
+
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-xs font-bold uppercase tracking-wider text-amber-700">
             Clinical Safety
@@ -3520,6 +3620,94 @@ function AIResultCard({
 /* ============================================================
    WAITING
    ============================================================ */
+
+function ResultList({
+  title,
+  items,
+  tone = "slate",
+}: {
+  title: string;
+  items: string[];
+  tone?: "slate" | "amber";
+}) {
+  const classes = tone === "amber"
+    ? "border-amber-200 bg-amber-50 text-amber-900"
+    : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <div className={`rounded-2xl border p-4 ${classes}`}>
+      <p className="text-xs font-bold uppercase tracking-wider">{title}</p>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6">
+        {items.map((item, index) => <li key={index}>{String(item)}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function SpecialistAlertPanel({ user }: { user: User }) {
+  const [alerts, setAlerts] = useState<Array<{ id: number; case_id: string; category: string; message: string }>>([]);
+  const [selectedCase, setSelectedCase] = useState<Record<string, unknown> | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const specialty = (user.specialty || "emergency").toLowerCase().replace(/\s+/g, "_");
+  const load = async () => { try { const r = await fetch(`${API_BASE}/api/alerts/${specialty}`); const d = await r.json(); setAlerts(d.alerts || []); } catch {} };
+  useEffect(() => { void load(); const id = window.setInterval(() => void load(), 5000); return () => window.clearInterval(id); }, [specialty]);
+  useEffect(() => { if (soundEnabled && alerts.length) { const utterance = new SpeechSynthesisUtterance(`Important emergency case. ${alerts[0].category} specialist review required.`); window.speechSynthesis.speak(utterance); } }, [alerts.length, soundEnabled]);
+  const acknowledge = async (id: number) => {
+    const response = await fetch(`${API_BASE}/api/alerts/${id}/acknowledge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ specialist_name: user.full_name }) });
+    const data = await response.json();
+    if (!response.ok) return alert(data.detail || "Could not acknowledge the case.");
+    const caseResponse = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(data.case_id)}`);
+    const caseData = await caseResponse.json();
+    if (caseResponse.ok) setSelectedCase(caseData.case || null);
+    void load();
+  };
+  const patient = selectedCase?.patient as Record<string, unknown> | undefined;
+  return <section className="mb-6 rounded-3xl border border-red-300 bg-red-50 p-5"><button onClick={() => setSoundEnabled(true)} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white">🔊 Enable emergency alarm</button>{alerts.map((a) => <div key={a.id} className="mt-4 rounded-2xl bg-white p-4"><p className="font-bold text-red-700">🚨 {a.category.toUpperCase()} EMERGENCY</p><p className="mt-1 text-sm">{a.message} Case: {a.case_id}</p><button onClick={() => void acknowledge(a.id)} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">Acknowledge Case</button></div>)}{patient && <div className="mt-4 rounded-2xl bg-white p-5"><p className="font-bold text-slate-900">Acknowledged patient details</p><p className="mt-2 text-sm"><strong>Name:</strong> {String(patient.patient_name || "Not recorded")}</p><p className="text-sm"><strong>Symptoms:</strong> {String(patient.symptoms || "Not recorded")}</p><p className="text-sm"><strong>Vitals:</strong> HR {String(patient.heart_rate ?? "—")}, BP {String(patient.systolic_bp ?? "—")}/{String(patient.diastolic_bp ?? "—")}, SpO₂ {String(patient.spo2 ?? "—")}%</p><p className="text-sm"><strong>History:</strong> {String(patient.medical_history || "Not recorded")}</p></div>}</section>;
+}
+
+function specialistForCategory(category: string): string | null {
+  const routes: Record<string, string> = {
+    cardiac: "the Cardiology specialist", neurological: "the Neurology specialist",
+    respiratory: "the Respiratory / Emergency specialist", trauma: "the Trauma / Emergency team",
+    metabolic: "the Emergency / Endocrinology team", poisoning: "the Toxicology / Emergency team",
+    environmental: "the Emergency / Critical Care team", other: "the Emergency doctor",
+  };
+  return routes[category.toLowerCase()] || null;
+}
+
+function ECGAttachmentPanel({ caseId, analyzing, onAnalyze }: {
+  caseId?: string;
+  analyzing: boolean;
+  onAnalyze: (type: "medical_report" | "physical_ecg") => void;
+}) {
+  const [medicalReport, setMedicalReport] = useState<File | null>(null);
+  const [physicalEcg, setPhysicalEcg] = useState<File | null>(null);
+  const [uploading, setUploading] = useState<"medical_report" | "physical_ecg" | null>(null);
+
+  const upload = async (type: "medical_report" | "physical_ecg", file: File | null) => {
+    if (!caseId) return alert("Create or load an emergency case first.");
+    if (!file) return alert("Choose a file first.");
+    setUploading(type);
+    try {
+      const formData = new FormData(); formData.append("file", file); formData.append("document_type", type);
+      const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/files`, { method: "POST", body: formData });
+      const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Upload failed.");
+      alert(`${type === "medical_report" ? "Medical ECG/report" : "Physical ECG photo"} attached to the case.`);
+    } catch (error) { alert(error instanceof Error ? error.message : "Upload failed."); }
+    finally { setUploading(null); }
+  };
+
+  const uploadCard = (title: string, hint: string, type: "medical_report" | "physical_ecg", file: File | null, setFile: (file: File | null) => void) => (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="font-bold text-slate-800">{title}</p><p className="mt-1 text-xs text-slate-500">{hint}</p>
+      <input className="mt-3 block w-full text-xs" type="file" accept="image/jpeg,image/png,application/pdf,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+      <button onClick={() => void upload(type, file)} disabled={!caseId || !file || uploading !== null} className="mt-3 w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-40">{uploading === type ? "Uploading..." : "Upload"}</button>
+      <button onClick={() => void onAnalyze(type)} disabled={!caseId || analyzing} className="mt-2 w-full rounded-xl bg-slate-900 px-3 py-2 text-sm font-bold text-white disabled:opacity-40">{analyzing ? "Analyzing..." : "Analyze with AI"}</button>
+    </div>
+  );
+
+  return <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"><SectionTitle title="ECG & Clinical Documents" subtitle="Attach a document, then request AI-assisted clinician review." icon="📄" /><div className="space-y-4">{uploadCard("Medical ECG / Report", "Digital ECG, scanned report, PDF, or CSV.", "medical_report", medicalReport, setMedicalReport)}{uploadCard("Physical ECG", "Clear photo of a paper ECG.", "physical_ecg", physicalEcg, setPhysicalEcg)}</div></section>;
+}
 
 function WaitingCard({
   title,

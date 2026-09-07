@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.case import EmergencyCase
+from models.alert import SpecialistAlert
 from services.ai_agent import ai_agent
 
 
@@ -16,6 +17,8 @@ router = APIRouter(
     prefix="/api/cases",
     tags=["Emergency Cases"]
 )
+
+SPECIALTY_ROUTES = {"cardiac": "cardiology", "neurological": "neurology", "respiratory": "emergency", "trauma": "emergency", "metabolic": "endocrinology", "poisoning": "toxicology", "environmental": "critical_care", "other": "emergency"}
 
 
 # =========================================================
@@ -207,6 +210,10 @@ async def analyze_case(
                 or result.get("recommended_action")
                 or ""
             )
+            category = str(result.get("emergency_category") or result.get("category") or "other").lower()
+            specialty = SPECIALTY_ROUTES.get(category, "emergency")
+            if result.get("requires_immediate_attention") or str(result.get("severity", "")).lower() in {"critical", "high"}:
+                db.add(SpecialistAlert(case_id=case_id, category=category, target_specialty=specialty, message=f"Important {category} emergency case. Specialist review required."))
 
         db_case.status = "analyzed"
 
@@ -239,6 +246,7 @@ async def analyze_case(
 @router.post("/{case_id}/analyze-file")
 async def analyze_case_with_file(
     case_id: str,
+    document_type: str = "medical_report",
     db: Session = Depends(get_db)
 ):
 
@@ -286,10 +294,17 @@ async def analyze_case_with_file(
         # REAL MULTIMODAL BACKEND AI AGENT
         # =============================================
 
+        try:
+            attachment = json.loads(db_case.ecg_file).get(document_type)
+        except (json.JSONDecodeError, AttributeError):
+            attachment = {"path": db_case.ecg_file, "mime_type": "image/jpeg"}
+        if not attachment:
+            raise HTTPException(status_code=400, detail="That document has not been uploaded")
+
         result = await ai_agent.analyze_case_with_file(
             patient_data=patient_data,
-            file_path=db_case.ecg_file,
-            mime_type="image/jpeg"
+            file_path=attachment["path"],
+            mime_type=attachment.get("mime_type", "image/jpeg")
         )
 
         # =============================================

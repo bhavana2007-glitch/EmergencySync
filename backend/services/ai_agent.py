@@ -76,13 +76,15 @@ Return ONLY valid JSON in this exact structure:
 
 {{
     "severity": "critical|high|moderate|low|undetermined",
-    "observations": [],
-    "possible_conditions": [],
+    "emergency_category": "Cardiac|Neurological|Respiratory|Trauma|Metabolic|Poisoning|Environmental|Other|Undetermined",
+    "observations": ["patient-specific finding and the supplied input that supports it"],
+    "possible_conditions": ["possible condition for clinician review, never a confirmed diagnosis"],
     "confidence": 0.0,
     "recommended_department": "",
     "requires_immediate_attention": false,
     "clinical_review_required": true,
-    "limitations": []
+    "limitations": ["missing, uncertain, or non-diagnostic information"],
+    "recommended_action": ""
 }}
 """
 

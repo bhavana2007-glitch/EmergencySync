@@ -594,7 +594,15 @@ async def get_active_ambulance():
 
             "longitude":
                 active_booking["patient_longitude"],
+            "age": active_booking["age"],
+            "gender": active_booking["gender"],
+            "symptoms": active_booking["symptoms"],
+            "medical_history": active_booking["medical_history"],
+            "medications": active_booking["medications"],
+            "allergies": active_booking["allergies"],
         },
+
+        "case_id": active_booking["case_id"],
 
         "hospital": {
             "id":

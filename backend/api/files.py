@@ -1,6 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from pathlib import Path
 import uuid
+import json
 
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,7 @@ ALLOWED_TYPES = {
 async def upload_file(
     case_id: str,
     file: UploadFile = File(...),
+    document_type: str = Form("medical_report"),
     db: Session = Depends(get_db)
 ):
 
@@ -90,10 +92,22 @@ async def upload_file(
     # Store file information
     # =====================================================
 
-    # For now, store the latest uploaded file path.
-    # The full file-history table will be added later.
+    if document_type not in {"medical_report", "physical_ecg"}:
+        raise HTTPException(status_code=400, detail="Invalid document type")
 
-    emergency_case.ecg_file = str(file_path)
+    try:
+        attachments = json.loads(emergency_case.ecg_file or "{}")
+        if not isinstance(attachments, dict):
+            attachments = {}
+    except json.JSONDecodeError:
+        attachments = {"medical_report": {"path": emergency_case.ecg_file, "mime_type": "image/jpeg"}}
+
+    attachments[document_type] = {
+        "path": str(file_path),
+        "mime_type": file.content_type,
+        "filename": file.filename,
+    }
+    emergency_case.ecg_file = json.dumps(attachments)
 
     db.commit()
     db.refresh(emergency_case)
@@ -110,5 +124,6 @@ async def upload_file(
         "status": "uploaded",
         "case_id": case_id,
         "file": file_info,
+        "document_type": document_type,
         "message": "File uploaded and attached to emergency case"
     }
