@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.user import User
+from models.hospital import Hospital
 
 from services.auth import (
     hash_password,
@@ -170,6 +171,11 @@ def register(
                     "Hospital ID is required "
                     "for this role"
                 )
+            )
+        if db.get(Hospital, data.hospital_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Select a registered local hospital for this staff account.",
             )
 
 

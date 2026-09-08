@@ -7,14 +7,17 @@ from api.hospitals import router as hospitals_router
 from api.auth import router as auth_router
 from api import ambulances
 from api.alerts import router as alerts_router
+from api.push import router as push_router
 
-from database import engine, Base
+from database import engine, Base, ensure_schema
 
 from models.case import EmergencyCase
 from models.hospital import Hospital
 from models.user import User
 from models.alert import SpecialistAlert
+from models.push_subscription import PushSubscription
 Base.metadata.create_all(bind=engine)
+ensure_schema()
 
 app = FastAPI(
     title="EmergencySync API",
@@ -25,7 +28,10 @@ app = FastAPI(
 # Allow the React frontend to communicate with FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,6 +42,7 @@ app.include_router(hospitals_router)
 app.include_router(auth_router)
 app.include_router(ambulances.router)
 app.include_router(alerts_router)
+app.include_router(push_router)
 
 @app.get("/")
 def root():

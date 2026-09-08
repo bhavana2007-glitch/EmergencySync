@@ -383,6 +383,21 @@ async def fetch_chennai_hospitals(
 # GET HOSPITALS
 # =========================================================
 
+@router.get("/local")
+def get_local_hospitals(db: Session = Depends(get_db)):
+    return {
+        "hospitals": [
+            {
+                "id": hospital.id,
+                "name": hospital.name,
+                "address": hospital.address,
+                "external_id": hospital.external_id,
+            }
+            for hospital in db.query(Hospital).order_by(Hospital.name).all()
+        ]
+    }
+
+
 @router.get("/")
 async def get_hospitals(
 

@@ -19,11 +19,7 @@ type User = {
 
 type PatientDetails = {
   age: string;
-  gender: string;
-  symptoms: string;
-  medical_history: string;
-  medications: string;
-  allergies: string;
+  blood_group: string;
 };
 
 type Hospital = {
@@ -310,11 +306,7 @@ export default function PatientDashboard({
   const [details, setDetails] =
     useState<PatientDetails>({
       age: "",
-      gender: "",
-      symptoms: "",
-      medical_history: "",
-      medications: "",
-      allergies: "",
+      blood_group: "",
     });
 
   // ==========================================================
@@ -1120,24 +1112,6 @@ export default function PatientDashboard({
         return;
       }
 
-      if (!details.gender) {
-        setError(
-          "Please select your gender."
-        );
-
-        return;
-      }
-
-      if (
-        !details.symptoms.trim()
-      ) {
-        setError(
-          "Please describe your emergency symptoms."
-        );
-
-        return;
-      }
-
       if (!selectedHospital) {
         setError(
           "Please select a Chennai hospital."
@@ -1187,23 +1161,15 @@ export default function PatientDashboard({
                           details.age
                         ),
 
-                      gender:
-                        details.gender,
+                      blood_group:
+                        details.blood_group.trim() ||
+                        "Unknown",
 
-                      symptoms:
-                        details.symptoms.trim(),
-
-                      medical_history:
-                        details.medical_history.trim() ||
-                        null,
-
-                      medications:
-                        details.medications.trim() ||
-                        null,
-
-                      allergies:
-                        details.allergies.trim() ||
-                        null,
+                      gender: "Unknown",
+                      symptoms: "Unknown / Not available",
+                      medical_history: "Unknown / Not available",
+                      medications: "Unknown / Not available",
+                      allergies: "Unknown / Not available",
 
                       heart_rate:
                         null,
@@ -1256,6 +1222,10 @@ export default function PatientDashboard({
             patient_name:
               user.full_name,
 
+            blood_group:
+              details.blood_group.trim() ||
+              "Unknown",
+
             patient_latitude:
               patientLocation[0],
 
@@ -1267,9 +1237,15 @@ export default function PatientDashboard({
 
             hospital_name:
               selectedHospital.name,
+            hospital_address:
+              selectedHospital.address,
+            hospital_latitude:
+              selectedHospital.latitude,
+            hospital_longitude:
+              selectedHospital.longitude,
 
             symptoms:
-              details.symptoms.trim(),
+              "Unknown / Not available",
 
             age:
               Number(
@@ -1277,19 +1253,16 @@ export default function PatientDashboard({
               ),
 
             gender:
-              details.gender,
+              "Unknown",
 
             medical_history:
-              details.medical_history.trim() ||
-              null,
+              "Unknown / Not available",
 
             medications:
-              details.medications.trim() ||
-              null,
+              "Unknown / Not available",
 
             allergies:
-              details.allergies.trim() ||
-              null,
+              "Unknown / Not available",
 
             case_id:
               caseId ?? null,
@@ -1534,52 +1507,17 @@ export default function PatientDashboard({
                 }
               />
 
-              <div>
-
-                <label className="mb-2 block text-sm font-semibold text-slate-700">
-                  Gender
-                </label>
-
-                <select
-                  value={
-                    details.gender
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setDetails(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-                        gender:
-                          event.target
-                            .value,
-                      })
-                    )
-                  }
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
-                >
-
-                  <option value="">
-                    Select gender
-                  </option>
-
-                  <option value="Male">
-                    Male
-                  </option>
-
-                  <option value="Female">
-                    Female
-                  </option>
-
-                  <option value="Other">
-                    Other
-                  </option>
-
-                </select>
-
-              </div>
+              <Field
+                label="Blood Group"
+                value={details.blood_group}
+                placeholder="Optional, e.g. O+"
+                onChange={(value) =>
+                  setDetails((previous) => ({
+                    ...previous,
+                    blood_group: value,
+                  }))
+                }
+              />
 
               <Field
                 label="Phone"
@@ -1592,84 +1530,12 @@ export default function PatientDashboard({
 
             </div>
 
-            <div className="mt-4 space-y-4">
-
-              <TextArea
-                label="Emergency Symptoms"
-                value={
-                  details.symptoms
-                }
-                placeholder="Example: severe chest pain, breathing difficulty..."
-                onChange={(value) =>
-                  setDetails(
-                    (
-                      previous
-                    ) => ({
-                      ...previous,
-                      symptoms:
-                        value,
-                    })
-                  )
-                }
-              />
-
-              <TextArea
-                label="Medical History"
-                value={
-                  details.medical_history
-                }
-                placeholder="Diabetes, hypertension, previous surgery..."
-                onChange={(value) =>
-                  setDetails(
-                    (
-                      previous
-                    ) => ({
-                      ...previous,
-                      medical_history:
-                        value,
-                    })
-                  )
-                }
-              />
-
-              <TextArea
-                label="Current Medications"
-                value={
-                  details.medications
-                }
-                placeholder="List current medicines if any..."
-                onChange={(value) =>
-                  setDetails(
-                    (
-                      previous
-                    ) => ({
-                      ...previous,
-                      medications:
-                        value,
-                    })
-                  )
-                }
-              />
-
-              <TextArea
-                label="Allergies"
-                value={
-                  details.allergies
-                }
-                placeholder="Medicine or food allergies..."
-                onChange={(value) =>
-                  setDetails(
-                    (
-                      previous
-                    ) => ({
-                      ...previous,
-                      allergies:
-                        value,
-                    })
-                  )
-                }
-              />
-
+            <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+              <p className="font-semibold text-slate-800">Current location</p>
+              <p className="mt-1">{locationMessage}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                GPS coordinates: {patientLocation[0].toFixed(5)}, {patientLocation[1].toFixed(5)}
+              </p>
             </div>
 
           </section>

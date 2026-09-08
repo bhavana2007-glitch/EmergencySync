@@ -10,6 +10,23 @@ import PatientDashboard from "./PatientDashboard";
 
 const API_BASE = "http://localhost:8000";
 const TOKEN_KEY = "emergencysync_access_token";
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
+
+function pushAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+}
+
+function urlBase64ToUint8Array(value: string): Uint8Array {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
+}
 
 /* ============================================================
    TYPES
@@ -38,10 +55,12 @@ type PatientForm = {
   patient_name: string;
   age: string;
   gender: string;
+  blood_group: string;
   symptoms: string;
   medical_history: string;
   medications: string;
   allergies: string;
+  nurse_observations: string;
   heart_rate: string;
   systolic_bp: string;
   diastolic_bp: string;
@@ -123,16 +142,41 @@ type DashboardProps = {
   analyzeUploadedFile: (documentType: "medical_report" | "physical_ecg") => void;
   loadAmbulanceCase: () => void;
   resetCase: () => void;
+  structureVoice: (transcript: string) => Promise<Partial<PatientForm>>;
+  voiceStructured: boolean;
+  onVoiceStructured: () => void;
 };
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: (event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
+  onerror: () => void;
+  onend: () => void;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
 
 const emptyForm: PatientForm = {
   patient_name: "",
   age: "",
   gender: "",
+  blood_group: "",
   symptoms: "",
   medical_history: "",
   medications: "",
   allergies: "",
+  nurse_observations: "",
   heart_rate: "",
   systolic_bp: "",
   diastolic_bp: "",
@@ -151,6 +195,20 @@ function App() {
 
   const [aiReady, setAiReady] =
     useState(false);
+  const [voiceStructured, setVoiceStructured] = useState(false);
+
+  const structureVoice = async (transcript: string) => {
+    const response = await fetch(`${API_BASE}/api/cases/voice-structure`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ transcript }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.detail || "Unable to structure the clinical handover.");
+    }
+    return data as Partial<PatientForm>;
+  };
 
   const [authLoading, setAuthLoading] =
     useState(true);
@@ -194,6 +252,19 @@ function App() {
 
   const [registerHospitalId, setRegisterHospitalId] =
     useState("");
+  const [localHospitals, setLocalHospitals] = useState<
+    Array<{ id: number; name: string; address: string }>
+  >([]);
+
+  useEffect(() => {
+    if (!["nurse", "ambulance", "doctor", "specialist", "hospital"].includes(registerRole)) {
+      return;
+    }
+    void fetch(`${API_BASE}/api/hospitals/local`)
+      .then((response) => response.json())
+      .then((data) => setLocalHospitals(data.hospitals || []))
+      .catch(() => setLocalHospitals([]));
+  }, [registerRole]);
 
   const [registerSpecialty, setRegisterSpecialty] =
     useState("");
@@ -570,6 +641,10 @@ function App() {
      ========================================================== */
 
   const createCase = async () => {
+    if (loading) {
+      return;
+    }
+
     if (!form.patient_name.trim()) {
       alert("Please enter patient name.");
       return;
@@ -601,7 +676,7 @@ function App() {
         `${API_BASE}/api/cases/`,
         {
           method: "POST",
-          headers: authHeaders(),
+          headers: pushAuthHeaders(),
           body: JSON.stringify(
             buildPatientPayload(form)
           ),
@@ -621,12 +696,6 @@ function App() {
 
       setCaseData(data);
       setAiResult(null);
-
-      alert(
-        `Emergency case created successfully!\n\nCase ID: ${
-          data.case_id || "Created"
-        }`
-      );
     } catch (error) {
       console.error(
         "Create emergency case error:",
@@ -650,6 +719,10 @@ function App() {
      ========================================================== */
 
   const analyzeCase = async () => {
+    if (analyzing) {
+      return;
+    }
+
     if (!caseData?.case_id) {
       alert(
         "Please create an emergency case first."
@@ -662,6 +735,13 @@ function App() {
         "AI Agent is currently unavailable."
       );
       return;
+    }
+
+    if (voiceStructured) {
+      const confirmed = window.confirm(
+        "Confirm the reviewed structured clinical data before starting AI analysis."
+      );
+      if (!confirmed) return;
     }
 
     setAnalyzing(true);
@@ -682,13 +762,20 @@ function App() {
       );
 
       const data = await response.json();
+      const backendError =
+        (typeof data.error === "string" && data.error) ||
+        (typeof data.detail === "string" && data.detail) ||
+        "";
 
       if (!response.ok) {
         throw new Error(
-          typeof data.detail === "string"
-            ? data.detail
-            : data.error ||
-                "AI analysis failed."
+          backendError || "AI analysis failed."
+        );
+      }
+
+      if (data.status === "ai_error") {
+        throw new Error(
+          backendError || "AI analysis failed."
         );
       }
 
@@ -699,11 +786,13 @@ function App() {
 
       if (!analysis) {
         throw new Error(
-          "No AI analysis was returned."
+          backendError ||
+            "No AI analysis was returned by the server."
         );
       }
 
       setAiResult(analysis);
+      setVoiceStructured(false);
 
       setCaseData((previous) =>
         previous
@@ -746,10 +835,12 @@ function App() {
         patient_name: patient.name || "",
         age: patient.age != null ? String(patient.age) : "",
         gender: patient.gender || "",
+        blood_group: patient.blood_group || "",
         symptoms: patient.symptoms || "",
         medical_history: patient.medical_history || "",
         medications: patient.medications || "",
         allergies: patient.allergies || "",
+        nurse_observations: patient.nurse_observations || "",
         heart_rate: "", systolic_bp: "", diastolic_bp: "", spo2: "",
         respiratory_rate: "", temperature: "",
       });
@@ -822,6 +913,7 @@ function App() {
         setRegisterHospitalId={
           setRegisterHospitalId
         }
+        localHospitals={localHospitals}
         registerSpecialty={registerSpecialty}
         setRegisterSpecialty={
           setRegisterSpecialty
@@ -856,11 +948,14 @@ function App() {
 
   if (role === "ambulance") {
     return (
-      <AmbulanceDashboard
-        user={currentUser}
-        logout={logout}
-        backendOnline={backendOnline}
-      />
+      <>
+        <PushNotificationRegistration role="ambulance" />
+        <AmbulanceDashboard
+          user={currentUser}
+          logout={logout}
+          backendOnline={backendOnline}
+        />
+      </>
     );
   }
 
@@ -880,6 +975,9 @@ function App() {
     analyzeUploadedFile,
     loadAmbulanceCase,
     resetCase,
+    structureVoice,
+    voiceStructured,
+    onVoiceStructured: () => setVoiceStructured(true),
   };
 
   /* NURSE */
@@ -910,13 +1008,16 @@ function App() {
 
   if (role === "specialist") {
     return (
-      <SpecialistDashboard
-        user={currentUser}
-        logout={logout}
-        backendOnline={backendOnline}
-        caseData={caseData}
-        aiResult={aiResult}
-      />
+      <>
+        <PushNotificationRegistration role="specialist" />
+        <SpecialistDashboard
+          user={currentUser}
+          logout={logout}
+          backendOnline={backendOnline}
+          caseData={caseData}
+          aiResult={aiResult}
+        />
+      </>
     );
   }
 
@@ -988,6 +1089,10 @@ function buildPatientPayload(
     gender:
       form.gender || null,
 
+    blood_group:
+      form.blood_group.trim() ||
+      "Unknown / Not available",
+
     symptoms:
       form.symptoms.trim(),
 
@@ -1001,6 +1106,10 @@ function buildPatientPayload(
 
     allergies:
       form.allergies.trim() ||
+      null,
+
+    nurse_observations:
+      form.nurse_observations.trim() ||
       null,
 
     heart_rate:
@@ -1115,6 +1224,7 @@ type AuthScreenProps = {
   setRegisterHospitalId: (
     value: string
   ) => void;
+  localHospitals: Array<{ id: number; name: string; address: string }>;
 
   registerSpecialty: string;
   setRegisterSpecialty: (
@@ -1155,6 +1265,7 @@ function AuthScreen(
 
     registerHospitalId,
     setRegisterHospitalId,
+    localHospitals,
 
     registerSpecialty,
     setRegisterSpecialty,
@@ -1349,17 +1460,25 @@ function AuthScreen(
                   />
 
                   {needsHospital && (
-                    <Input
-                      label="Hospital ID"
-                      value={
-                        registerHospitalId
-                      }
-                      type="number"
-                      placeholder="Enter hospital ID"
-                      onChange={
-                        setRegisterHospitalId
-                      }
-                    />
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-slate-700">
+                        Hospital
+                      </label>
+                      <select
+                        value={registerHospitalId}
+                        onChange={(event) => setRegisterHospitalId(event.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
+                      >
+                        <option value="">
+                          {localHospitals.length ? "Select a registered hospital" : "No registered hospitals yet"}
+                        </option>
+                        {localHospitals.map((hospital) => (
+                          <option key={hospital.id} value={hospital.id}>
+                            {hospital.name} (ID {hospital.id})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
 
                   {needsSpecialty && (
@@ -2644,14 +2763,12 @@ function SpecialistDashboard({
   user,
   logout,
   backendOnline,
-  caseData,
-  aiResult,
 }: {
   user: User;
   logout: () => void;
   backendOnline: boolean;
-  caseData: CaseData | null;
-  aiResult: AIResult | null;
+  caseData?: CaseData | null;
+  aiResult?: AIResult | null;
 }) {
   return (
     <DashboardShell
@@ -2670,44 +2787,6 @@ function SpecialistDashboard({
         icon="🧠"
       />
       <SpecialistAlertPanel user={user} />
-
-      {caseData ? (
-        <>
-          <div className="mb-6 rounded-3xl border border-red-300 bg-red-50 p-6">
-            <p className="text-xs font-bold uppercase tracking-widest text-red-600">
-              EMERGENCY ALERT
-            </p>
-
-            <h2 className="mt-2 text-2xl font-bold">
-              Patient Review Required
-            </h2>
-
-            <p className="mt-2 text-sm text-slate-600">
-              Case ID:{" "}
-              <strong>
-                {caseData.case_id ||
-                  "N/A"}
-              </strong>
-            </p>
-          </div>
-
-          {aiResult ? (
-            <AIResultCard
-              aiResult={aiResult}
-            />
-          ) : (
-            <WaitingCard
-              title="Waiting for AI Analysis"
-              text="The emergency case has been received."
-            />
-          )}
-        </>
-      ) : (
-        <WaitingCard
-          title="No Emergency Alert"
-          text="Monitoring for emergency cases."
-        />
-      )}
     </DashboardShell>
   );
 }
@@ -2849,12 +2928,21 @@ function ClinicalDataPanel({
   aiResult,
   aiReady,
   roleLabel,
+  structureVoice,
+  onVoiceStructured,
 }: DashboardProps & {
   roleLabel: string;
 }) {
   return (
     <div className="grid gap-8 lg:grid-cols-[1.5fr_0.8fr]">
       <div>
+        {roleLabel === "Nurse" && (
+          <VoiceClinicalCapture
+            structureVoice={structureVoice}
+            updateField={updateField}
+            onStructured={onVoiceStructured}
+          />
+        )}
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <SectionTitle
             step="STEP 01"
@@ -2891,38 +2979,14 @@ function ClinicalDataPanel({
               }
             />
 
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Gender
-              </label>
-
-              <select
-                value={form.gender}
-                onChange={(event) =>
-                  updateField(
-                    "gender",
-                    event.target.value
-                  )
-                }
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
-              >
-                <option value="">
-                  Select gender
-                </option>
-
-                <option value="Male">
-                  Male
-                </option>
-
-                <option value="Female">
-                  Female
-                </option>
-
-                <option value="Other">
-                  Other
-                </option>
-              </select>
-            </div>
+            <Input
+              label="Blood Group"
+              value={form.blood_group}
+              placeholder="Unknown / Not available"
+              onChange={(value) =>
+                updateField("blood_group", value)
+              }
+            />
 
             <Input
               label="Allergies"
@@ -2980,6 +3044,17 @@ function ClinicalDataPanel({
                     "medical_history",
                     value
                   )
+                }
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <Textarea
+                label="Nurse / Paramedic Observations"
+                value={form.nurse_observations}
+                placeholder="Unknown / Not available if no additional observations..."
+                onChange={(value) =>
+                  updateField("nurse_observations", value)
                 }
               />
             </div>
@@ -3098,7 +3173,7 @@ function ClinicalDataPanel({
             className="flex-1 rounded-2xl bg-red-600 px-6 py-4 font-bold text-white shadow-lg transition hover:bg-red-700 disabled:opacity-50"
           >
             {loading
-              ? "Creating Emergency Case..."
+              ? "Creating emergency case..."
               : "🚨 Create Emergency Case"}
           </button>
 
@@ -3191,7 +3266,7 @@ function ClinicalDataPanel({
                 className="mt-4 w-full rounded-2xl bg-slate-900 px-5 py-4 font-bold text-white disabled:opacity-40"
               >
                 {analyzing
-                  ? "🧠 AI Analyzing..."
+                  ? "Analyzing with AI..."
                   : "🧠 Analyze Emergency"}
               </button>
             </>
@@ -3205,6 +3280,219 @@ function ClinicalDataPanel({
         />
       </aside>
     </div>
+  );
+}
+
+function VoiceClinicalCapture({
+  structureVoice,
+  updateField,
+  onStructured,
+}: {
+  structureVoice: (transcript: string) => Promise<Partial<PatientForm>>;
+  updateField: (field: keyof PatientForm, value: string) => void;
+  onStructured: () => void;
+}) {
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const transcriptRef = useRef("");
+  const processingRef = useRef(false);
+  const [recording, setRecording] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [message, setMessage] = useState("");
+  const [seconds, setSeconds] = useState(0);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    if (!recording) return;
+    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [recording]);
+
+  const stop = () => {
+    recognitionRef.current?.stop();
+    setRecording(false);
+  };
+
+  const applyExtractedFields = (values: Record<string, unknown>) => {
+    const normalized = Object.fromEntries(
+      Object.entries(values).map(([key, value]) => [
+        key.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
+        value,
+      ])
+    ) as Record<string, unknown>;
+    const read = (...keys: string[]) =>
+      keys
+        .map((key) => normalized[key])
+        .find((value) => {
+          if (value === undefined || value === null) return false;
+          const text = String(value).trim();
+          return text !== "" && text !== "Unknown / Not available";
+        });
+    const bloodPressure = read("blood_pressure", "bp");
+    const bloodPressureObject = bloodPressure && typeof bloodPressure === "object"
+      ? bloodPressure as { systolic?: unknown; diastolic?: unknown }
+      : null;
+    const bpParts = bloodPressureObject
+      ? ["", String(bloodPressureObject.systolic ?? ""), String(bloodPressureObject.diastolic ?? "")]
+      : bloodPressure == null
+        ? []
+        : String(bloodPressure).match(/(\d+(?:\.\d+)?)\s*(?:\/|over|,|\s)\s*(\d+(?:\.\d+)?)/i) || [];
+    const treatments = read("treatments_given", "treatments", "interventions");
+    const currentState = read("current_state");
+    const ecg = read("ecg_report", "ecg");
+    const observations = read("nurse_observations", "observations");
+    const observationParts = [
+      currentState ? String(currentState) : "",
+      treatments ? `Treatment: ${String(treatments)}` : "",
+      ecg ? `ECG: ${String(ecg)}` : "",
+      observations ? String(observations) : "",
+    ].filter(Boolean);
+    const mapped: Partial<PatientForm> = {
+      patient_name: read("patient_name", "name") as string | undefined,
+      age: read("age") as string | undefined,
+      gender: read("gender", "sex") as string | undefined,
+      blood_group: read("blood_group", "blood_type") as string | undefined,
+      symptoms: read("symptoms", "presenting_symptoms") as string | undefined,
+      medical_history: read("medical_history", "history") as string | undefined,
+      medications: read("medications", "current_medications") as string | undefined,
+      allergies: read("allergies") as string | undefined,
+      nurse_observations: observationParts.length ? observationParts.join(". ") : undefined,
+      heart_rate: read("heart_rate", "pulse", "hr") as string | undefined,
+      systolic_bp: (read("systolic_bp", "systolic", "sbp") as string | undefined) || bpParts[1],
+      diastolic_bp: (read("diastolic_bp", "diastolic", "dbp") as string | undefined) || bpParts[2],
+      spo2: read("spo2", "sp_o2", "oxygen_saturation") as string | undefined,
+      respiratory_rate: read("respiratory_rate", "respiratory", "rr") as string | undefined,
+      temperature: read("temperature", "temp") as string | undefined,
+    };
+    (Object.keys(mapped) as Array<keyof PatientForm>).forEach((field) => {
+      const value = mapped[field];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        updateField(field, String(value));
+      }
+    });
+  };
+
+  const populateFromTranscript = async (text: string) => {
+    if (!text.trim()) {
+      setMessage("Record a short handover before structuring it.");
+      return;
+    }
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setProcessing(true);
+    setMessage("Processing...");
+    try {
+      const values = await structureVoice(text);
+      applyExtractedFields(values as Record<string, unknown>);
+      setReviewed(true);
+      onStructured();
+      setMessage("Structured fields are ready for nurse review. Edit them below, then confirm before analysis.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to structure the handover.");
+    } finally {
+      processingRef.current = false;
+      setProcessing(false);
+    }
+  };
+
+  const start = () => {
+    const Constructor =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Constructor) {
+      setMessage("Voice capture is not supported in this browser. Please use the editable fields.");
+      return;
+    }
+    setMessage("");
+    setReviewed(false);
+    setTranscript("");
+    transcriptRef.current = "";
+    setSeconds(0);
+    const recognition = new Constructor();
+    recognition.lang = "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      let text = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        text += `${event.results[index][0].transcript} `;
+      }
+      const next = text.trim();
+      transcriptRef.current = next;
+      setTranscript(next);
+    };
+    recognition.onerror = () => {
+      setRecording(false);
+      setMessage("Microphone access or voice recognition failed. You can re-record or enter the fields manually.");
+    };
+    recognition.onend = () => {
+      setRecording(false);
+      const finalTranscript = transcriptRef.current.trim();
+      if (finalTranscript) {
+        void populateFromTranscript(finalTranscript);
+      }
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setRecording(true);
+    } catch {
+      setMessage("Unable to start the microphone. Please check browser permission and try again.");
+    }
+  };
+
+  return (
+    <section className="mb-8 rounded-3xl border border-blue-200 bg-blue-50 p-6">
+      <SectionTitle
+        step="VOICE-FIRST ENTRY"
+        title="Nurse Clinical Handover"
+        subtitle="Record a short, deliberate handover. Review and edit the fields before analysis."
+        icon="🎙️"
+      />
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={recording ? stop : start}
+          disabled={processing}
+          className="rounded-2xl bg-blue-700 px-5 py-3 font-bold text-white disabled:opacity-50"
+        >
+          {recording ? `Stop Recording (${seconds}s)` : "Start Recording"}
+        </button>
+        <button
+          type="button"
+          onClick={start}
+          disabled={recording || processing}
+          className="rounded-2xl border border-blue-300 bg-white px-5 py-3 font-semibold text-blue-800 disabled:opacity-50"
+        >
+          Re-record
+        </button>
+        <button
+          type="button"
+          onClick={() => void populateFromTranscript(transcript)}
+          disabled={recording || processing || !transcript.trim()}
+          className="rounded-2xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-800 disabled:opacity-50"
+        >
+          {processing ? "Processing..." : "Structure Handover"}
+        </button>
+      </div>
+      <textarea
+        value={transcript}
+        onChange={(event) => {
+          const next = event.target.value;
+          transcriptRef.current = next;
+          setTranscript(next);
+          setReviewed(false);
+        }}
+        rows={3}
+        placeholder="Transcript appears here for review. You may correct it before structuring."
+        className="mt-4 w-full rounded-2xl border border-blue-200 bg-white p-4 outline-none"
+      />
+      {reviewed && (
+        <p className="mt-3 text-sm font-semibold text-emerald-700">
+          Structured clinical data is ready for review. Explicit nurse confirmation is required before using Analyze.
+        </p>
+      )}
+      {message && <p className="mt-3 text-sm font-semibold text-slate-700">{message}</p>}
+    </section>
   );
 }
 
@@ -3644,16 +3932,106 @@ function ResultList({
   );
 }
 
+function normalizeSpecialtyForLookup(value: string | null | undefined): string {
+  const cleaned = (value || "emergency")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[\/\-_]+/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const aliases: Record<string, string> = {
+    cardiology: "cardiology",
+    cardiologist: "cardiology",
+    cardiac: "cardiology",
+    neurology: "neurology",
+    neurologist: "neurology",
+    neurological: "neurology",
+    pulmonology: "pulmonology",
+    pulmonary: "pulmonology",
+    respiratory: "pulmonology",
+    respiratorymedicine: "pulmonology",
+    emergency: "emergency",
+    emergencymedicine: "emergency",
+    endocrinology: "endocrinology",
+    metabolic: "endocrinology",
+    toxicology: "toxicology",
+    poisoning: "toxicology",
+    criticalcare: "critical_care",
+    criticalcaremedicine: "critical_care",
+    critical_care: "critical_care",
+    trauma: "trauma",
+  };
+
+  return aliases[cleaned] || cleaned.replace(/\s+/g, "_");
+}
+
 function SpecialistAlertPanel({ user }: { user: User }) {
-  const [alerts, setAlerts] = useState<Array<{ id: number; case_id: string; category: string; message: string }>>([]);
+  const [alerts, setAlerts] = useState<Array<{
+    id: number;
+    case_id: string;
+    category: string;
+    message: string;
+    target_specialty?: string;
+    severity?: string | null;
+    hospital_name?: string | null;
+    eta_minutes?: number | null;
+    patient_age?: number | null;
+    patient_gender?: string | null;
+  }>>([]);
   const [selectedCase, setSelectedCase] = useState<Record<string, unknown> | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
-  const specialty = (user.specialty || "emergency").toLowerCase().replace(/\s+/g, "_");
-  const load = async () => { try { const r = await fetch(`${API_BASE}/api/alerts/${specialty}`); const d = await r.json(); setAlerts(d.alerts || []); } catch {} };
-  useEffect(() => { void load(); const id = window.setInterval(() => void load(), 5000); return () => window.clearInterval(id); }, [specialty]);
-  useEffect(() => { if (soundEnabled && alerts.length) { const utterance = new SpeechSynthesisUtterance(`Important emergency case. ${alerts[0].category} specialist review required.`); window.speechSynthesis.speak(utterance); } }, [alerts.length, soundEnabled]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [playedAlertIds, setPlayedAlertIds] = useState<Set<number>>(new Set());
+  const specialty = normalizeSpecialtyForLookup(user.specialty);
+
+  const load = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/alerts/${encodeURIComponent(specialty)}`, {
+        headers: pushAuthHeaders(),
+      });
+      if (!r.ok) {
+        return;
+      }
+      const d = await r.json();
+      setAlerts(d.alerts || []);
+    } catch {
+      // Ignore polling failures; the alert panel will retry automatically.
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    const id = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(id);
+  }, [specialty, user.hospital_id]);
+
+  useEffect(() => {
+    if (!soundEnabled || !alerts.length) {
+      return;
+    }
+
+    const newAlertIds = alerts.filter((alert) => !playedAlertIds.has(alert.id)).map((alert) => alert.id);
+    if (!newAlertIds.length) {
+      return;
+    }
+
+    setPlayedAlertIds((previous) => new Set([...previous, ...newAlertIds]));
+    const alert = alerts.find((candidate) => newAlertIds.includes(candidate.id));
+    if (!alert) {
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(
+      `Emergency alert. ${alert.category} specialist review required. Please acknowledge the case.`
+    );
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [alerts, playedAlertIds, soundEnabled]);
+
   const acknowledge = async (id: number) => {
-    const response = await fetch(`${API_BASE}/api/alerts/${id}/acknowledge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ specialist_name: user.full_name }) });
+    const response = await fetch(`${API_BASE}/api/alerts/${id}/acknowledge`, { method: "POST", headers: pushAuthHeaders(), body: JSON.stringify({ specialist_name: user.full_name }) });
     const data = await response.json();
     if (!response.ok) return alert(data.detail || "Could not acknowledge the case.");
     const caseResponse = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(data.case_id)}`);
@@ -3661,8 +4039,193 @@ function SpecialistAlertPanel({ user }: { user: User }) {
     if (caseResponse.ok) setSelectedCase(caseData.case || null);
     void load();
   };
+
+  const sendTestAlarm = async () => {
+    setSoundEnabled(true);
+    const response = await fetch(`${API_BASE}/api/alerts/test-push`, {
+      method: "POST",
+      headers: pushAuthHeaders(),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      window.alert(data.detail || "Could not send the specialist test alarm.");
+    }
+  };
+
   const patient = selectedCase?.patient as Record<string, unknown> | undefined;
-  return <section className="mb-6 rounded-3xl border border-red-300 bg-red-50 p-5"><button onClick={() => setSoundEnabled(true)} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white">🔊 Enable emergency alarm</button>{alerts.map((a) => <div key={a.id} className="mt-4 rounded-2xl bg-white p-4"><p className="font-bold text-red-700">🚨 {a.category.toUpperCase()} EMERGENCY</p><p className="mt-1 text-sm">{a.message} Case: {a.case_id}</p><button onClick={() => void acknowledge(a.id)} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">Acknowledge Case</button></div>)}{patient && <div className="mt-4 rounded-2xl bg-white p-5"><p className="font-bold text-slate-900">Acknowledged patient details</p><p className="mt-2 text-sm"><strong>Name:</strong> {String(patient.patient_name || "Not recorded")}</p><p className="text-sm"><strong>Symptoms:</strong> {String(patient.symptoms || "Not recorded")}</p><p className="text-sm"><strong>Vitals:</strong> HR {String(patient.heart_rate ?? "—")}, BP {String(patient.systolic_bp ?? "—")}/{String(patient.diastolic_bp ?? "—")}, SpO₂ {String(patient.spo2 ?? "—")}%</p><p className="text-sm"><strong>History:</strong> {String(patient.medical_history || "Not recorded")}</p></div>}</section>;
+  const aiAnalysis = selectedCase?.ai_analysis as AIResult | undefined;
+  const attachments = selectedCase?.attachments as { medical_report?: boolean; physical_ecg?: boolean } | undefined;
+  const ambulanceLocation = selectedCase?.ambulance_location as { latitude?: number | null; longitude?: number | null } | undefined;
+  const patientLocation = selectedCase?.patient_location as { latitude?: number | null; longitude?: number | null } | undefined;
+  return (
+    <section className="mb-6 rounded-3xl border border-red-300 bg-red-50 p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-bold uppercase tracking-[0.18em] text-red-700">Emergency alerts</p>
+        <button
+          type="button"
+          onClick={() => void sendTestAlarm()}
+          className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700"
+        >
+          🔊 Test alarm
+        </button>
+      </div>
+      {alerts.length === 0 && !patient && (
+        <p className="text-sm text-red-800">No incoming emergency for your specialty at this hospital.</p>
+      )}
+      {alerts.map((a) => (
+        <div key={a.id} className="mt-4 rounded-2xl bg-white p-4">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-red-700">🔴 Incoming emergency</p>
+          <p className="mt-2 font-bold text-red-700">{a.category.toUpperCase()} EMERGENCY</p>
+          {a.severity && <p className="text-sm font-semibold capitalize">{a.severity}</p>}
+          {a.target_specialty && (
+            <p className="text-sm">{a.target_specialty.replaceAll("_", " ")} required</p>
+          )}
+          <p className="mt-1 text-sm">
+            Patient: {a.patient_age != null ? `${a.patient_age}-year-old` : "Age not recorded"}
+            {a.patient_gender ? ` ${a.patient_gender}` : ""}
+          </p>
+          {a.hospital_name && <p className="text-sm">Hospital: {a.hospital_name}</p>}
+          {a.eta_minutes != null && <p className="text-sm">ETA: {a.eta_minutes} minutes</p>}
+          <p className="mt-1 text-sm">{a.message} Case: {a.case_id}</p>
+          <button onClick={() => void acknowledge(a.id)} className="mt-3 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">ACKNOWLEDGE EMERGENCY</button>
+        </div>
+      ))}
+      {patient && (
+        <div className="mt-4 space-y-4 rounded-2xl bg-white p-5">
+          <p className="font-bold text-slate-900">Acknowledged emergency case</p>
+          <p className="text-sm"><strong>Case ID:</strong> {String(selectedCase?.case_id || "Not recorded")}</p>
+          <p className="text-sm"><strong>Name:</strong> {String(patient.patient_name || "Not recorded")}</p>
+          <p className="text-sm"><strong>Age:</strong> {String(patient.age ?? "Not recorded")}</p>
+          <p className="text-sm"><strong>Blood group:</strong> {String(patient.blood_group || "Not recorded")}</p>
+          <p className="text-sm"><strong>Destination hospital:</strong> {String(selectedCase?.hospital_name || "Not recorded")}</p>
+          <p className="text-sm">
+            <strong>Patient location:</strong>{" "}
+            {patientLocation?.latitude != null && patientLocation?.longitude != null
+              ? `${patientLocation.latitude}, ${patientLocation.longitude}`
+              : "Not recorded"}
+          </p>
+          <p className="text-sm">
+            <strong>Ambulance location:</strong>{" "}
+            {ambulanceLocation?.latitude != null && ambulanceLocation?.longitude != null
+              ? `${ambulanceLocation.latitude}, ${ambulanceLocation.longitude}`
+              : "Not recorded"}
+          </p>
+          <p className="text-sm"><strong>ETA:</strong> {selectedCase?.eta_minutes != null ? `${String(selectedCase.eta_minutes)} minutes` : "Not recorded"}</p>
+          <p className="text-sm"><strong>Symptoms:</strong> {String(patient.symptoms || "Not recorded")}</p>
+          <p className="text-sm"><strong>Medical history:</strong> {String(patient.medical_history || "Not recorded")}</p>
+          <p className="text-sm"><strong>Allergies:</strong> {String(patient.allergies || "Not recorded")}</p>
+          <p className="text-sm"><strong>Medications:</strong> {String(patient.medications || "Not recorded")}</p>
+          <p className="text-sm"><strong>HR:</strong> {String(patient.heart_rate ?? "—")} <strong>BP:</strong> {String(patient.systolic_bp ?? "—")}/{String(patient.diastolic_bp ?? "—")} <strong>SpO₂:</strong> {String(patient.spo2 ?? "—")}% <strong>RR:</strong> {String(patient.respiratory_rate ?? "—")} <strong>Temp:</strong> {String(patient.temperature ?? "—")}</p>
+          <p className="text-sm"><strong>Nurse observations / current state / treatments:</strong> {String(patient.nurse_observations || "Not recorded")}</p>
+          <p className="text-sm">
+            <strong>ECG/report:</strong>{" "}
+            {attachments?.medical_report || attachments?.physical_ecg
+              ? [
+                  attachments.medical_report ? "medical report attached" : "",
+                  attachments.physical_ecg ? "physical ECG attached" : "",
+                ].filter(Boolean).join("; ")
+              : "Not attached"}
+          </p>
+          {aiAnalysis ? (
+            <AIResultCard aiResult={aiAnalysis} />
+          ) : (
+            <p className="text-sm text-slate-600">No AI analysis is stored on this case.</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PushNotificationRegistration({
+  role,
+}: {
+  role: "ambulance" | "specialist";
+}) {
+  const [status, setStatus] = useState("");
+  const enablingRef = useRef(false);
+
+  const enablePush = async (fromUserClick: boolean) => {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setStatus("Browser push notifications are not supported.");
+      return;
+    }
+
+    let publicKey = VAPID_PUBLIC_KEY;
+    if (!publicKey) {
+      const keyResponse = await fetch(`${API_BASE}/api/push/vapid-public-key`);
+      if (!keyResponse.ok) {
+        setStatus("Push notifications are not configured on this deployment.");
+        return;
+      }
+      const keyData = await keyResponse.json();
+      publicKey = String(keyData.public_key || "");
+    }
+    if (!publicKey) {
+      setStatus("Push notifications are not configured on this deployment.");
+      return;
+    }
+
+    const permission = fromUserClick
+      ? await Notification.requestPermission()
+      : Notification.permission;
+    if (permission !== "granted") {
+      if (fromUserClick) {
+        setStatus("Notification permission was not granted.");
+      }
+      return;
+    }
+
+    await navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
+      updateViaCache: "none",
+    });
+    const readyRegistration = await navigator.serviceWorker.ready;
+    if (!readyRegistration.active) {
+      throw new Error("The EmergencySync service worker is not active yet. Please try again.");
+    }
+    let subscription = await readyRegistration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await readyRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+
+    const response = await fetch(`${API_BASE}/api/push/subscribe`, {
+      method: "POST",
+      headers: pushAuthHeaders(),
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.success === false) {
+      throw new Error(data.detail || data.message || "Unable to save browser notification registration.");
+    }
+    setStatus("Browser emergency notifications enabled.");
+  };
+
+  useEffect(() => {
+    if (enablingRef.current) return;
+    enablingRef.current = true;
+    void enablePush(false).catch(() => {
+      enablingRef.current = false;
+    });
+  }, [role]);
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 max-w-xs rounded-2xl border border-red-200 bg-white p-3 shadow-lg">
+      <button
+        type="button"
+        onClick={() => void enablePush(true).catch((error) => {
+          setStatus(error instanceof Error ? error.message : "Unable to enable notifications.");
+        })}
+        className="rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white"
+      >
+        Enable {role} emergency notifications
+      </button>
+      {status && <p className="mt-2 text-xs text-slate-600">{status}</p>}
+    </div>
+  );
 }
 
 function specialistForCategory(category: string): string | null {

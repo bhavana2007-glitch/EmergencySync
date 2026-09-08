@@ -1,9 +1,17 @@
 from datetime import datetime
+import re
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from api.auth import get_current_user
+from database import get_db
+from models.case import EmergencyCase
+from models.hospital import Hospital
+from models.user import User
+from services.push_notifications import send_push_to_users
 
 
 router = APIRouter(
@@ -112,12 +120,16 @@ async def calculate_route(
 class AmbulanceBookingRequest(BaseModel):
     patient_id: str
     patient_name: str
+    blood_group: Optional[str] = None
 
     patient_latitude: float
     patient_longitude: float
 
     hospital_id: str
     hospital_name: str
+    hospital_address: Optional[str] = None
+    hospital_latitude: Optional[float] = None
+    hospital_longitude: Optional[float] = None
 
     symptoms: Optional[str] = None
     age: Optional[int] = None
@@ -159,6 +171,92 @@ class PatientLocationUpdate(BaseModel):
     longitude: float
 
 
+def validate_destination_hospital_id(
+    hospital_id: str,
+    hospital_name: str,
+    hospital_address: Optional[str],
+    db: Session,
+) -> str:
+    """Validate local database IDs and external Nominatim/OSM IDs."""
+    normalized_id = hospital_id.strip()
+    if not normalized_id or not hospital_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A destination hospital ID and name are required.",
+        )
+
+    if normalized_id.isdigit():
+        if db.get(Hospital, int(normalized_id)) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid destination hospital ID.",
+            )
+        return normalized_id
+
+    if re.fullmatch(
+        r"osm-(?:node|way|relation)-[1-9][0-9]*",
+        normalized_id,
+    ):
+        return normalized_id
+
+    raise HTTPException(
+        status_code=400,
+        detail="Invalid destination hospital ID.",
+    )
+
+def resolve_local_hospital(
+    hospital_id: str,
+    hospital_name: str,
+    hospital_address: Optional[str],
+    latitude: Optional[float],
+    longitude: Optional[float],
+    db: Session,
+) -> Hospital:
+    if hospital_id.isdigit():
+        hospital = db.get(Hospital, int(hospital_id))
+        if hospital is None:
+            raise HTTPException(status_code=400, detail="Invalid destination hospital ID.")
+        return hospital
+
+    hospital = (
+        db.query(Hospital)
+        .filter(Hospital.external_id == hospital_id)
+        .first()
+    )
+    if hospital is not None:
+        return hospital
+    if latitude is None or longitude is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Hospital coordinates are required to register an external OSM hospital.",
+        )
+
+    hospital = Hospital(
+        external_id=hospital_id,
+        name=hospital_name.strip(),
+        address=(hospital_address or hospital_name).strip(),
+        latitude=latitude,
+        longitude=longitude,
+        emergency_available="yes",
+        specialties="",
+    )
+    db.add(hospital)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        hospital = (
+            db.query(Hospital)
+            .filter(Hospital.external_id == hospital_id)
+            .first()
+        )
+        if hospital is None:
+            raise
+    else:
+        db.refresh(hospital)
+    return hospital
+
+
 # ============================================================
 # TEMPORARY ACTIVE BOOKING
 # ============================================================
@@ -168,11 +266,13 @@ active_booking = {
 
     "patient_id": None,
     "patient_name": None,
+    "blood_group": None,
 
     "patient_latitude": None,
     "patient_longitude": None,
 
     "hospital_id": None,
+    "hospital_external_id": None,
     "hospital_name": None,
 
     "symptoms": None,
@@ -268,7 +368,24 @@ async def update_patient_route_eta():
 @router.post("/book")
 async def book_ambulance(
     booking: AmbulanceBookingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    destination_hospital_id = validate_destination_hospital_id(
+        booking.hospital_id,
+        booking.hospital_name,
+        booking.hospital_address,
+        db,
+    )
+    local_hospital = resolve_local_hospital(
+        destination_hospital_id,
+        booking.hospital_name,
+        booking.hospital_address,
+        booking.hospital_latitude,
+        booking.hospital_longitude,
+        db,
+    )
+
 
     booking_id = (
         f"AMB-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -283,6 +400,7 @@ async def book_ambulance(
     active_booking["patient_name"] = (
         booking.patient_name
     )
+    active_booking["blood_group"] = booking.blood_group
 
     active_booking["patient_latitude"] = (
         booking.patient_latitude
@@ -292,9 +410,8 @@ async def book_ambulance(
         booking.patient_longitude
     )
 
-    active_booking["hospital_id"] = (
-        booking.hospital_id
-    )
+    active_booking["hospital_id"] = str(local_hospital.id)
+    active_booking["hospital_external_id"] = destination_hospital_id
 
     active_booking["hospital_name"] = (
         booking.hospital_name
@@ -318,6 +435,28 @@ async def book_ambulance(
 
     active_booking["case_id"] = booking.case_id
 
+    if booking.case_id:
+        db_case = (
+            db.query(EmergencyCase)
+            .filter(EmergencyCase.case_id == booking.case_id)
+            .first()
+        )
+        if db_case:
+            try:
+                db_case.hospital_id = local_hospital.id
+                db_case.blood_group = booking.blood_group
+                db.commit()
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid destination hospital ID.",
+                )
+            try:
+                from api.cases_backup import dispatch_specialist_notification_for_case
+                dispatch_specialist_notification_for_case(db, db_case)
+            except Exception:
+                pass
+
     active_booking["status"] = (
         "ambulance_requested"
     )
@@ -334,6 +473,26 @@ async def book_ambulance(
 
     active_booking["route_available"] = False
 
+    ambulance_users = (
+        db.query(User)
+        .filter(User.role == "ambulance", User.is_active == True)
+        .all()
+    )
+    send_push_to_users(
+        db,
+        [user.id for user in ambulance_users],
+        {
+            "title": "🚨 Emergency ambulance request",
+            "body": (
+                f"A patient needs emergency ambulance assistance. "
+                f"Destination: {booking.hospital_name}. "
+                "Patient location available. Please log in and accept the request."
+            ),
+            "tag": f"ambulance-request-{booking_id}",
+            "url": "/",
+        },
+    )
+
     return {
         "success": True,
         "booking_id": booking_id,
@@ -347,7 +506,8 @@ async def book_ambulance(
         "distance_km": None,
         "route_available": False,
         "hospital": {
-            "id": booking.hospital_id,
+            "id": destination_hospital_id,
+            "local_id": local_hospital.id,
             "name": booking.hospital_name,
         },
     }
@@ -588,6 +748,7 @@ async def get_active_ambulance():
 
             "name":
                 active_booking["patient_name"],
+            "blood_group": active_booking["blood_group"],
 
             "latitude":
                 active_booking["patient_latitude"],
@@ -607,6 +768,8 @@ async def get_active_ambulance():
         "hospital": {
             "id":
                 active_booking["hospital_id"],
+            "external_id":
+                active_booking["hospital_external_id"],
 
             "name":
                 active_booking["hospital_name"],

@@ -14,9 +14,13 @@ class EmergencyCase(Base):
     patient_name = Column(String, nullable=False)
     patient_age = Column(Integer, nullable=True)
     patient_gender = Column(String, nullable=True)
+    blood_group = Column(String, nullable=True)
 
     symptoms = Column(Text, nullable=True)
     medical_history = Column(Text, nullable=True)
+    medications = Column(Text, nullable=True)
+    allergies = Column(Text, nullable=True)
+    nurse_observations = Column(Text, nullable=True)
 
     heart_rate = Column(Float, nullable=True)
     systolic_bp = Column(Float, nullable=True)

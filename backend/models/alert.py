@@ -10,6 +10,7 @@ class SpecialistAlert(Base):
     case_id = Column(String, index=True, nullable=False)
     category = Column(String, nullable=False)
     target_specialty = Column(String, nullable=False)
+    hospital_id = Column(Integer, nullable=True, index=True)
     message = Column(Text, nullable=False)
     acknowledged = Column(Boolean, default=False, nullable=False)
     acknowledged_by = Column(String, nullable=True)

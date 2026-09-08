@@ -1,12 +1,14 @@
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, UniqueConstraint
 
 from database import Base
 
 
 class Hospital(Base):
     __tablename__ = "hospitals"
+    __table_args__ = (UniqueConstraint("external_id", name="uq_hospitals_external_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String, nullable=True, index=True)
 
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
