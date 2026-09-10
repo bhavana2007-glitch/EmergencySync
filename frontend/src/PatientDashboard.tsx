@@ -267,28 +267,7 @@ function normaliseHospitals(
 // NORMALISE AMBULANCE RESPONSE
 // ============================================================
 
-function normaliseAmbulances(
-  data: any
-): Ambulance[] {
-  const candidates =
-    Array.isArray(data)
-      ? data
-      : data?.ambulances ??
-        data?.data ??
-        data?.results ??
-        (data?.ambulance
-          ? [data.ambulance]
-          : [data]);
 
-  return candidates
-    .map(normaliseAmbulance)
-    .filter(
-      (
-        item: Ambulance | null
-      ): item is Ambulance =>
-        item !== null
-    );
-}
 
 // ============================================================
 // MAIN COMPONENT
