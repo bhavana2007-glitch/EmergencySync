@@ -4185,12 +4185,18 @@ function PushNotificationRegistration({
       throw new Error("The EmergencySync service worker is not active yet. Please try again.");
     }
     let subscription = await readyRegistration.pushManager.getSubscription();
-    if (!subscription) {
-      subscription = await readyRegistration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey).buffer,
-      });
-    }
+
+if (!subscription) {
+  subscription = await readyRegistration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: (() => {
+      const bytes = urlBase64ToUint8Array(publicKey);
+      const buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
+      return buffer;
+    })(),
+  });
+}
 
     const response = await fetch(`${API_BASE}/api/push/subscribe`, {
       method: "POST",
