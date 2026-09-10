@@ -2090,41 +2090,8 @@ function Field({
 // TEXTAREA COMPONENT
 // ============================================================
 
-function TextArea({
-  label,
-  value,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onChange: (
-    value: string
-  ) => void;
-}) {
-  return (
-    <div>
 
-      <label className="mb-2 block text-sm font-semibold text-slate-700">
-        {label}
-      </label>
 
-      <textarea
-        value={value}
-        placeholder={placeholder}
-        rows={3}
-        onChange={(event) =>
-          onChange(
-            event.target.value
-          )
-        }
-        className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
-      />
-
-    </div>
-  );
-}
 
 // ============================================================
 // INFO ROW
