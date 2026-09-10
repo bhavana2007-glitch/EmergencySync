@@ -15,7 +15,7 @@ router = APIRouter(
 )
 
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path("/tmp/uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
