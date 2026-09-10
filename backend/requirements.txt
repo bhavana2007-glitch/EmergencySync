@@ -1,1 +1,11 @@
-pywebpush>=2.0.0
+fastapi
+uvicorn
+sqlalchemy
+pydantic[email]
+python-multipart
+python-dotenv
+PyJWT
+pwdlib[argon2]
+pywebpush
+py-vapid
+cryptography
