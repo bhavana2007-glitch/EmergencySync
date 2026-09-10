@@ -9,3 +9,4 @@ pwdlib[argon2]
 pywebpush
 py-vapid
 cryptography
+httpx
