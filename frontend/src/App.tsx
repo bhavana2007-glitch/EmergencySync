@@ -8,7 +8,7 @@
 
 import PatientDashboard from "./PatientDashboard";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://emergency-sync-vgds-one.vercel.app";
 const TOKEN_KEY = "emergencysync_access_token";
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
