@@ -87,8 +87,6 @@ export default function AmbulanceDashboard({
   const ambulanceMarkerRef =
     useRef<L.Marker | null>(null);
 
-  const hospitalMarkerRef =
-    useRef<L.Marker | null>(null);
 
   // ---------------------------------------------------------
   // GET CURRENT EMERGENCY REQUEST
