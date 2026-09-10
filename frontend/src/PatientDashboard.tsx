@@ -351,8 +351,8 @@ export default function PatientDashboard({
   // ==========================================================
 
   const [
-    loadingHospitals,
-    _setLoadingHospitals,
+    _loadingHospitals,
+    setLoadingHospitals,
   ] = useState(false);
 
   const [
