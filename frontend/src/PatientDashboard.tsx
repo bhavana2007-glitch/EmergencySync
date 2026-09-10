@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://emergency-sync-vgds-one.vercel.app";
 const CHENNAI_CENTER: [number, number] = [13.0827, 80.2707];
 const TOKEN_KEY = "emergencysync_access_token";
 
